@@ -1,0 +1,15 @@
+# The dsh-model-usage-widget bundle patch layer.
+#
+# Installed as a profile layer by:
+#   dsh plugin --profile web add dsh-model-usage-widget
+#
+# One dual-face row: the HOST half (index.js) registers the /model-usage route
+# that reads per-provider usage (settings namespaces llm-deepseek + llm-pi-ai,
+# keys via the credentials seam); the CLIENT half is declared in the package
+# manifest (dsh.client + exports["./client"], built to lib/client.js by
+# `node build.mjs`), which the host client-modules service scans into
+# window.__DSH_BOOT__ at runtime. No dynamic Cordis runner, no per-start
+# steering, no automatic conversation.
+- insert:
+    - id: dsh-model-usage-widget
+      name: dsh-model-usage-widget

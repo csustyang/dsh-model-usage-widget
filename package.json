@@ -1,0 +1,32 @@
+{
+  "name": "dsh-model-usage-widget",
+  "version": "0.1.0",
+  "description": "Per-provider LLM usage widget for the DeepSeek Harness sidebar footer: reads the model-config provider list (llm-deepseek + llm-pi-ai settings namespaces), resolves API keys through the credentials seam, shows DeepSeek balance, MiniMax coding-plan windows, and Volcengine Ark usage via the local arkcli CLI (with a POST ark-login route spawning arkcli auth login volc-sso). Static host routes + client bundle — no dynamic runner, no conversation wake.",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./lib/client.js",
+    "./src/client.js": "./src/client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "src/client.js",
+    "lib/client.js",
+    "cordis.patch.yml"
+  ],
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web"
+    }
+  },
+  "license": "MIT"
+}

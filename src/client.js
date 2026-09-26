@@ -1,0 +1,696 @@
+// dsh-model-usage-widget — static client half (browser plugin body).
+//
+// This file is the body of the built client bundle (lib/client.js). The build
+// script (build.mjs) wraps it in the DSH client module registration:
+//
+//   window.__ModuleLoader__.load({ id: "dsh-model-usage-widget", factory: (require) => {
+//     var module = { exports: {} };
+//     var exports = module.exports;
+//     ...this file...
+//     return module.exports;
+//   } });
+//
+// Inside that factory, `require` is the module table: only 'react' (and the
+// other platform module specifiers) are resolvable, so this file imports
+// nothing but 'react' and inlines everything else. It exports a standard
+// cordis client plugin { inject, apply }:
+//
+//   - inject: ['slots'] — the browser slots service (ui-sidebar declares the
+//     'sidebar.footer.action' hole; slots.inject waits for that declaration).
+//   - apply: injects the widget styles, then registers ONE sidebar footer
+//     component that renders one row PER provider from the model config
+//     (DeepSeek balance, MiniMax coding-plan windows, 火山方舟 登录认证 jump
+//     button after the usage). Data comes from the same-origin host route
+//     /model-usage (index.js) via fetch — no dynamic runner, no approval,
+//     no steering.
+
+const React = require('react')
+
+const h = React.createElement
+const useLayout = typeof React.useLayoutEffect === 'function' ? React.useLayoutEffect : React.useEffect
+
+// ── styles ──────────────────────────────────────────────────────────────────
+
+const WIDGET_CSS =
+  '.mkw-stack{display:flex;flex-direction:column;min-width:0;order:100}' +
+  'div:has(>[data-slot="sidebar.footer.action"]):has(.mkw-stack){display:contents}' +
+  '.mkw-rail{width:36px}' +
+  '.mkw-sb{display:flex;align-items:center;gap:6px;height:30px;width:100%;padding:0 8px;border:0;border-radius:8px;background:transparent;color:var(--dsw-alias-label-secondary,#94a3b8);cursor:pointer;font-family:inherit;white-space:nowrap;overflow:hidden;transition:background .15s ease,color .15s ease}' +
+  '.mkw-sb:hover{color:var(--dsw-alias-label-primary,#e2e8f0);background:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.08))}' +
+  '.mkw-rail .mkw-sb{width:36px;height:36px;padding:0;gap:0;justify-content:center;border-radius:10px}' +
+  '.mkw-icon{flex:none;display:flex;align-items:center;justify-content:center;line-height:0}' +
+  '.mkw-icon>svg{display:block;transform:translateY(-1.4px)}' +
+  '.mkw-badge{flex:none;display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:5px;font-size:10px;font-weight:800;color:#fff;font-family:ui-monospace,monospace;line-height:1}' +
+  '.mkw-rail .mkw-badge{width:18px;height:18px;border-radius:6px;font-size:11px}' +
+  '.mkw-pct{font-size:12px;font-weight:700;font-family:ui-monospace,monospace;white-space:nowrap}' +
+  '.mkw-sep{font-size:11px;color:var(--dsw-alias-label-tertiary,#64748b)}' +
+  '.mkw-dim{font-size:11px;color:var(--dsw-alias-label-tertiary,#64748b);white-space:nowrap}' +
+  '.mkw-err{font-size:11px;color:#f87171;white-space:nowrap}' +
+  '.mkw-auth{flex:none;cursor:pointer;border:0.5px solid var(--dsw-alias-border-l2,rgba(255,255,255,.12));background:transparent;color:var(--dsw-alias-label-secondary,#94a3b8);border-radius:7px;font-size:11px;line-height:1;padding:3px 8px;margin-left:auto;font-family:inherit;transition:color .15s ease,background .15s ease}' +
+  '.mkw-auth:hover{color:var(--dsw-alias-label-primary,#e2e8f0);background:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.08))}' +
+  '.mkw-sb-pop{position:fixed;z-index:90;width:272px;max-height:calc(100vh - 16px);overflow:auto;background:var(--dsw-alias-bg-layer-2,rgb(44,44,46));border:0;border-radius:14px;padding:10px 12px;box-shadow:var(--dsw-elevation-prominent,0 0 0 0.5px rgba(255,255,255,.2),0 3px 8px 0 rgba(0,0,0,.04),0 0 20px 0 rgba(0,0,0,.05));display:flex;flex-direction:column;gap:8px}' +
+  '.mkw-sb-head{display:flex;align-items:center;justify-content:space-between;gap:8px}' +
+  '.mkw-sb-head-right{display:flex;align-items:center;gap:6px;min-width:0}' +
+  '.mkw-sb-title{font-size:12px;font-weight:700}' +
+  '.mkw-sb-refresh{flex:none;display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;padding:0;border:0;border-radius:8px;background:transparent;color:var(--dsw-alias-label-secondary,#94a3b8);cursor:pointer;line-height:0;transition:background .15s ease,color .15s ease}' +
+  '.mkw-sb-refresh:hover:not(:disabled){color:var(--dsw-alias-label-primary,#e2e8f0);background:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.08))}' +
+  '.mkw-sb-refresh:disabled{cursor:default;opacity:.5}' +
+  '.mkw-spin{animation:mkw-spin .8s linear infinite}' +
+  '@keyframes mkw-spin{to{transform:rotate(360deg)}}' +
+  '.mkw-card{background:var(--dsw-alias-bg-layer-1,rgb(35,35,36));border:0.5px solid var(--dsw-alias-border-l1,rgba(255,255,255,.06));border-radius:10px;padding:7px 10px;display:flex;flex-direction:column;gap:5px}' +
+  '.mkw-card-top{display:flex;align-items:center;justify-content:space-between;gap:10px}' +
+  '.mkw-period-name{font-size:12px;font-weight:600}' +
+  '.mkw-pill{font-size:10px;font-weight:600;white-space:nowrap}' +
+  '.mkw-big{font-size:20px;font-weight:800;font-family:ui-monospace,monospace;line-height:1}' +
+  '.mkw-sub{font-size:10px;color:var(--dsw-alias-label-secondary,#94a3b8)}' +
+  '.mkw-win{display:flex;flex-direction:column;gap:4px}' +
+  '.mkw-win-top{display:flex;align-items:center;justify-content:space-between;gap:10px}' +
+  '.mkw-win-name{font-size:12px;font-weight:600}' +
+  '.mkw-win-pct{font-size:14px;font-weight:700;font-family:ui-monospace,monospace;line-height:1}' +
+  '.mkw-reset{font-size:10px;color:var(--dsw-alias-label-secondary,#94a3b8);display:flex;align-items:center;gap:4px}' +
+  '.mkw-reset-dot{width:5px;height:5px;border-radius:50%;background:#67a0fe;display:inline-block}' +
+  '.mkw-track{height:6px;border-radius:999px;background:var(--dsw-alias-bg-layer-2,rgb(44,44,46));overflow:hidden;border:0.5px solid var(--dsw-alias-border-l1,rgba(255,255,255,.06))}' +
+  '.mkw-fill{height:100%;border-radius:999px;transition:width .5s ease}' +
+  '.mkw-auth-big{cursor:pointer;border:0.5px solid var(--dsw-alias-border-l2,rgba(255,255,255,.12));background:transparent;color:var(--dsw-alias-label-secondary,#94a3b8);border-radius:7px;font-size:11px;line-height:1;padding:5px 10px;align-self:flex-start;font-family:inherit;transition:color .15s ease,background .15s ease}' +
+  '.mkw-auth-big:hover{color:var(--dsw-alias-label-primary,#e2e8f0);background:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.08))}' +
+  '.mkw-msg{font-size:11px;color:var(--dsw-alias-label-secondary,#94a3b8);word-break:break-word}' +
+  '.mkw-sb-foot{font-size:10px;color:var(--dsw-alias-label-secondary,rgba(148,163,184,.7));text-align:right;padding-right:2px}' +
+  '.mkw-skel{height:9px;border-radius:5px;background:var(--dsw-alias-bg-layer-2,rgb(44,44,46));opacity:.6}' +
+  '.mkw-chip{display:inline-flex;align-items:center;gap:4px;min-width:0}' +
+  '.mkw-chip-badge{flex:none;display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;border-radius:4px;font-size:9px;font-weight:800;color:#fff;font-family:ui-monospace,monospace;line-height:1}' +
+  '.mkw-chip-num{font-size:12px;font-weight:700;font-family:ui-monospace,monospace;white-space:nowrap}' +
+  '.mkw-chip-icon{flex:none;display:inline-flex;align-items:center;justify-content:center;line-height:0}' +
+  '.mkw-chip-icon>svg{display:block}' +
+
+  '.mkw-agg{position:relative;display:inline-flex;align-items:center;justify-content:center;line-height:0}' +
+  '.mkw-agg-count{position:absolute;top:-4px;right:-7px;min-width:12px;height:12px;padding:0 3px;border-radius:999px;background:var(--dsw-alias-label-tertiary,#64748b);color:#fff;font-size:9px;font-weight:800;font-family:ui-monospace,monospace;line-height:12px;text-align:center}' +
+  '.mkw-agg-count-issue{background:#f87171}' +
+  '.mkw-tabbar{display:flex;flex-wrap:wrap;align-items:center;gap:4px;max-height:70px;overflow-y:auto;scrollbar-width:thin;flex:none}' +
+  '.mkw-tab{flex:none;display:inline-flex;align-items:center;gap:4px;padding:3px 7px;border:0.5px solid var(--dsw-alias-border-l1,rgba(255,255,255,.06));border-radius:999px;background:transparent;color:var(--dsw-alias-label-secondary,#94a3b8);cursor:pointer;font-size:11px;line-height:1;font-family:inherit;transition:color .15s ease,background .15s ease,border-color .15s ease}' +
+  '.mkw-tab:hover{color:var(--dsw-alias-label-primary,#e2e8f0)}' +
+  '.mkw-tab-on{color:var(--dsw-alias-label-primary,#e2e8f0);background:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.08));border-color:var(--dsw-alias-border-l2,rgba(255,255,255,.12))}' +
+  '.mkw-tab-badge{flex:none;display:inline-flex;align-items:center;justify-content:center;width:13px;height:13px;border-radius:4px;font-size:9px;font-weight:800;color:#fff;font-family:ui-monospace,monospace;line-height:1}' +
+  '.mkw-sb-body{display:flex;flex-direction:column;gap:6px;max-height:46vh;overflow-y:auto}'
+
+// ── data source ─────────────────────────────────────────────────────────────
+
+/** Resolve the browser's Host base with the connection carrier's null-origin fallback. */
+function hostBase() {
+  const origin = globalThis.location && typeof globalThis.location.origin === 'string'
+    ? globalThis.location.origin
+    : undefined
+  return origin !== undefined && origin !== 'null' ? origin : 'http://dsh.internal'
+}
+
+async function callUsage(force) {
+  const url = new URL('/model-usage' + (force ? '?force=1' : ''), hostBase())
+  const response = await fetch(url, { headers: { accept: 'application/json' } })
+  if (!response.ok) throw new Error('HTTP ' + String(response.status))
+  return response.json()
+}
+
+async function callArkLogin() {
+  const url = new URL('/model-usage/ark-login', hostBase())
+  const response = await fetch(url, { method: 'POST' })
+  if (!response.ok) throw new Error('HTTP ' + String(response.status))
+  return response.json()
+}
+
+// ── shared formatting helpers ───────────────────────────────────────────────
+
+function toneColor(percent) {
+  if (percent >= 90) return '#f87171'
+  if (percent >= 75) return '#fbbf24'
+  return '#34d399'
+}
+// Water-level color: encodes how the window's usage paces against the
+// window's elapsed time (cyclePercent, computed host-side from resetsAt and
+// the window length). No pacing data → fall back to absolute thresholds.
+function levelColor(p) {
+  const usage = p.percent
+  const elapsed = p.cyclePercent
+  if (usage >= 90) return '#f87171'
+  if (typeof elapsed !== 'number' || !isFinite(elapsed)) return toneColor(usage)
+  const pace = usage - elapsed
+  if (pace > 15) return '#f87171'
+  if (pace > 0) return '#fbbf24'
+  return '#34d399'
+}
+function barColor(percent) {
+  if (percent >= 90) return 'linear-gradient(90deg,#f43f5e,#dc2626)'
+  if (percent >= 75) return 'linear-gradient(90deg,#f59e0b,#ea580c)'
+  return 'linear-gradient(90deg,#6366f1,#3b82f6)'
+}
+
+function pad(n) { return n < 10 ? '0' + n : String(n) }
+function parseTime(str) {
+  if (!str) return null
+  const t = new Date(str).getTime()
+  return isNaN(t) ? null : t
+}
+function fmtCountdown(str) {
+  const target = parseTime(str)
+  if (!target) return str || ''
+  const diff = target - Date.now()
+  if (diff <= 0) return '即将重置'
+  const d = new Date(target)
+  const n = new Date(Date.now())
+  const sameDay = d.getDate() === n.getDate() && d.getMonth() === n.getMonth() && d.getFullYear() === n.getFullYear()
+  const days = Math.floor(diff / 86400000)
+  const hours = Math.floor((diff % 86400000) / 3600000)
+  const minutes = Math.floor((diff % 3600000) / 60000)
+  const timeStr = pad(d.getHours()) + ':' + pad(d.getMinutes())
+  if (days > 0) return (d.getMonth() + 1) + '/' + d.getDate() + ' ' + timeStr + ' (' + days + '天' + (hours > 0 ? hours + '小时' : '') + '后)'
+  if (sameDay) return '今天 ' + timeStr + ' (' + (hours > 0 ? hours + '小时' : '') + minutes + '分钟后)'
+  return '明天 ' + timeStr + ' (' + (hours > 0 ? hours + '小时' : '') + minutes + '分钟后)'
+}
+function fmtResetShort(str) {
+  const target = parseTime(str)
+  if (!target) return str || ''
+  const d = new Date(target)
+  const diff = target - Date.now()
+  if (diff <= 24 * 3600 * 1000) {
+    return '下次重置 ' + pad(d.getHours()) + ':' + pad(d.getMinutes())
+  }
+  const now = new Date()
+  const datePart = d.getFullYear() === now.getFullYear()
+    ? (d.getMonth() + 1) + '/' + d.getDate()
+    : d.getFullYear() + '/' + (d.getMonth() + 1) + '/' + d.getDate()
+  return '下次重置 ' + datePart
+}
+function fmtMoney(total, currency) {
+  const c = String(currency || '')
+  if (c === 'CNY') return '¥' + total
+  if (c === 'USD') return '$' + total
+  return c ? total + ' ' + c : String(total)
+}
+
+
+// ── widget UI ───────────────────────────────────────────────────────────────
+
+function useModelUsage() {
+  const [result, setResult] = React.useState(null)
+  const [busy, setBusy] = React.useState(false)
+  const load = React.useCallback(async function (force) {
+    try {
+      const data = await callUsage(force)
+      setResult(data)
+    } catch (err) {
+      setResult({ ok: false, error: '调用失败', detail: String((err && err.message) || err), updatedAt: Date.now(), providers: [] })
+    }
+  }, [])
+  const refresh = React.useCallback(async function () {
+    setBusy(true)
+    await load(true)
+    setBusy(false)
+  }, [load])
+  React.useEffect(function () {
+    load(false)
+    const id = setInterval(function () { load(false) }, 60000)
+    return function () { clearInterval(id) }
+  }, [load])
+  return { result: result, load: load, refresh: refresh, busy: busy }
+}
+
+// Right edge of the sidebar column: the widest tall-and-narrow ancestor.
+// Falling back to the anchor itself keeps this harmless if the shell's
+// structure changes.
+function columnRight(node, vw, vh) {
+  let best = 0
+  let el = node.parentElement
+  for (let i = 0; i < 8 && el; i++) {
+    let r = null
+    try { r = el.getBoundingClientRect() } catch (err) {}
+    if (r && r.width > 0 && r.width < vw * 0.5 && r.height > vh * 0.5 && r.right > best) {
+      best = r.right
+    }
+    el = el.parentElement
+  }
+  return best
+}
+
+// Measure the rendered popup, then seat it flush against the sidebar on
+// the left and the viewport on the bottom.
+function placePop(btn, pop) {
+  const b = btn.getBoundingClientRect()
+  const p = pop.getBoundingClientRect()
+  const vw = typeof window !== 'undefined' ? window.innerWidth : 1200
+  const vh = typeof window !== 'undefined' ? window.innerHeight : 800
+  const column = columnRight(btn, vw, vh)
+  let left = Math.max(b.right, column)
+  if (left + p.width > vw) {
+    const flipped = b.left - p.width
+    left = flipped >= 0 ? flipped : vw - p.width
+  }
+  left = Math.max(0, Math.min(left, Math.max(0, vw - p.width)))
+  const top = Math.max(0, vh - p.height - 8)
+  return { left: Math.round(left), top: Math.round(top) }
+}
+
+// The slot renders through a [data-slot] anchor with display:contents, so
+// the footer stack can be flattened by CSS to let the order property seat
+// this entry below the Settings row. This effect is the fallback for a
+// browser without :has(): it finds the nearest flex container and, when
+// that is still the horizontal footer row, wraps it and gives this stack
+// full width. Every mutation is restored on cleanup.
+function bindLayout(node, wide) {
+  let el = node && node.parentElement
+  for (let i = 0; i < 4 && el; i++) {
+    let cs = null
+    try {
+      if (typeof window !== 'undefined' && window.getComputedStyle) cs = window.getComputedStyle(el)
+    } catch (err) {}
+    if (cs && String(cs.display).indexOf('flex') >= 0) {
+      const isRow = String(cs.flexDirection || '').indexOf('row') === 0
+      const prevWrap = el.style.flexWrap
+      const prevFlex = node.style.flex
+      if (isRow) {
+        if (cs.flexWrap !== 'wrap') el.style.flexWrap = 'wrap'
+        node.style.flex = wide ? '1 0 100%' : '0 0 auto'
+      }
+      return function () {
+        el.style.flexWrap = prevWrap
+        node.style.flex = prevFlex
+      }
+    }
+    el = el.parentElement
+  }
+  return undefined
+}
+
+const BADGE_COLORS = { deepseek: '#4d6bfe', minimax: '#ff4d4d', stepfun: '#16D6D2' }
+function badgeColor(p) {
+  if (p.kind === 'deepseek' || String(p.id).indexOf('deepseek') === 0) return BADGE_COLORS.deepseek
+  if (p.kind === 'minimax') return BADGE_COLORS.minimax
+  if (p.kind === 'stepfun') return BADGE_COLORS.stepfun
+  return '#64748b'
+}
+
+
+function winTip(w) {
+  let text = w.name + '：已用 ' + w.percent.toFixed(2) + '%'
+  if (w.resetsAt) text += ' · ' + fmtResetShort(w.resetsAt)
+  return text
+}
+
+function retryHint(p) {
+  // 冷却倒计时提示：host 失败结果带 retryAt（退避截止 epoch ms），前端换算剩余分钟
+  if (!p || typeof p.retryAt !== 'number') return ''
+  const remain = p.retryAt - Date.now()
+  if (remain <= 0) return '（即将自动重试）'
+  return '（约 ' + Math.max(1, Math.ceil(remain / 60000)) + ' 分钟后自动重试）'
+}
+
+function rowTip(p) {
+  if (p.status === 'ok') {
+    if (p.balance) {
+      return p.displayName + ' · 余额 ' + fmtMoney(p.balance.total, p.balance.currency) + (p.balance.available ? '' : ' · 不可用')
+    }
+    if (Array.isArray(p.windows)) {
+      return p.displayName + ' · ' + p.windows.map(function (w) { return w.name + ' ' + w.percent.toFixed(2) + '%' }).join(' · ')
+    }
+  }
+  return (p.displayName ? p.displayName + ' · ' : '') + (p.message || p.status) + retryHint(p)
+}
+
+
+function statusPill(p) {
+  if (p.status === 'ok') return h('span', { className: 'mkw-pill', style: { color: '#34d399' } }, '正常')
+  if (p.status === 'auth') return h('span', { className: 'mkw-pill', style: { color: '#fbbf24' } }, '需登录')
+  if (p.status === 'nocred') return h('span', { className: 'mkw-pill', style: { color: '#94a3b8' } }, '未配置')
+  if (p.status === 'unauth') return h('span', { className: 'mkw-pill', style: { color: '#fbbf24' } }, '需认证')
+  if (p.status === 'na') return h('span', { className: 'mkw-pill', style: { color: '#94a3b8' } }, '不支持')
+  return h('span', { className: 'mkw-pill', style: { color: '#f87171' } }, '异常')
+}
+
+function WindowBlock(w) {
+  return h('div', { className: 'mkw-win', key: w.key },
+    h('div', { className: 'mkw-win-top' },
+      h('span', { className: 'mkw-win-name' }, w.name),
+      h('span', { className: 'mkw-win-pct', title: winTip(w), style: { color: levelColor(w) } }, w.percent.toFixed(2) + '%')
+    ),
+    w.resetsAt ? h('div', { className: 'mkw-reset' },
+      h('span', { className: 'mkw-reset-dot' }),
+      h('span', null, fmtCountdown(w.resetsAt))
+    ) : null,
+    h('div', { className: 'mkw-track' },
+      h('div', { className: 'mkw-fill', style: { width: Math.min(100, Math.max(0, w.percent)) + '%', background: barColor(w.percent) } })
+    )
+  )
+}
+
+function ProviderCard(p, onAuth, authBusy) {
+  let body = null
+  if (p.status === 'ok' && p.balance) {
+    body = h('div', { className: 'mkw-win' },
+      h('div', { className: 'mkw-win-top' },
+        h('span', { className: 'mkw-win-name' }, '账户余额'),
+        h('span', { className: 'mkw-win-pct' }, fmtMoney(p.balance.total, p.balance.currency))
+      ),
+      h('div', { className: 'mkw-sub' }, p.balance.currency + ' · ' + (p.balance.available ? '可用' : '不可用'))
+    )
+  } else if (p.status === 'ok' && Array.isArray(p.windows)) {
+    body = p.windows.map(WindowBlock)
+  } else {
+    body = h('div', { className: 'mkw-win' },
+      p.message ? h('div', { className: 'mkw-msg' }, p.message) : null,
+      p.retryAt ? h('div', { className: 'mkw-sub' }, '冷却中 ' + retryHint(p)) : null,
+      p.authUrl ? h('button', { className: 'mkw-auth-big', disabled: !!(authBusy && p.kind === 'ark'), onClick: function (e) { onAuth(p, e) } }, authBusy && p.kind === 'ark' ? '登录中…' : '登录认证') : null
+    )
+  }
+  return h('div', { className: 'mkw-card', key: p.id },
+    h('div', { className: 'mkw-card-top' },
+      h('span', { className: 'mkw-period-name' }, p.displayName),
+      statusPill(p)
+    ),
+    body
+  )
+}
+
+// ── aggregate row (方案 A：恒定一行) ────────────────────────────────────────
+// One constant row no matter how many providers are configured: wide shows up
+// to 3 "badge + representative number" chips, rail shows one usage icon with a
+// count bubble (red when any provider is degraded). Details live in the popup
+// with provider tabs, preserving "click a model → see only that model".
+
+function aggRepWindow(p) {
+  // 侧栏代表窗口 = 水位最高的那个：多限额窗口（如方舟 5h/周/月）动态取最大，
+  // 5h 涨过周限额时下一次刷新自动切换展示（chip 只显数字，窗口明细在 tooltip 与弹窗卡片）。
+  if (!Array.isArray(p.windows) || !p.windows.length) return null
+  let best = p.windows[0]
+  for (let i = 1; i < p.windows.length; i++) {
+    if (p.windows[i].percent > best.percent) best = p.windows[i]
+  }
+  return best
+}
+
+function statusShort(p) {
+  if (p.status === 'nocred') return '未配置'
+  if (p.status === 'unauth') return '未授权'
+  if (p.status === 'auth') return '需登录'
+  if (p.status === 'na') return '—'
+  return '失败'
+}
+
+function statusColor(p) {
+  if (p.status === 'unauth' || p.status === 'auth') return '#fbbf24'
+  if (p.status === 'error') return '#f87171'
+  return null
+}
+
+// ── brand marks（各家品牌图标：Simple Icons / 官网 favicon 内联；无图标提供方回退字母徽章）──
+function deepseekIcon(size) {
+  return h('svg', { viewBox: '0 0 24 24', width: size, height: size, fill: 'currentColor', 'aria-hidden': 'true' },
+    h('path', { d: 'M23.748 4.651c-.254-.124-.364.113-.512.233-.051.04-.094.09-.137.137-.372.397-.806.657-1.373.626-.829-.046-1.537.214-2.163.848-.133-.782-.575-1.248-1.247-1.548-.352-.155-.708-.311-.955-.65-.172-.24-.219-.509-.305-.774-.055-.16-.11-.323-.293-.35-.2-.031-.278.136-.356.276-.313.572-.434 1.202-.422 1.84.027 1.436.633 2.58 1.838 3.393.137.094.172.187.129.323-.082.28-.18.553-.266.833-.055.179-.137.218-.328.14a5.5 5.5 0 0 1-1.737-1.179c-.857-.828-1.631-1.743-2.597-2.46a12 12 0 0 0-.689-.47c-.985-.957.13-1.743.387-1.836.27-.098.094-.433-.778-.428-.872.003-1.67.295-2.687.685a3 3 0 0 1-.465.136 9.6 9.6 0 0 0-2.883-.101c-1.885.21-3.39 1.1-4.497 2.622C.082 8.776-.231 10.854.152 13.02c.403 2.284 1.568 4.175 3.36 5.653 1.857 1.533 3.997 2.284 6.438 2.14 1.482-.085 3.132-.284 4.994-1.86.47.234.962.328 1.78.398.629.058 1.235-.031 1.705-.129.735-.155.684-.836.418-.961-2.155-1.004-1.682-.595-2.112-.926 1.095-1.295 2.768-3.598 3.284-6.733.05-.346.115-.834.108-1.114-.004-.171.035-.238.23-.257a4.2 4.2 0 0 0 1.545-.475c1.397-.763 1.96-2.016 2.093-3.517.02-.23-.004-.467-.247-.588M11.58 18.168c-2.088-1.642-3.101-2.183-3.52-2.16-.39.024-.32.472-.234.763.09.288.207.487.371.74.114.167.192.416-.113.603-.673.416-1.842-.14-1.897-.168-1.361-.801-2.5-1.86-3.301-3.306-.775-1.393-1.225-2.888-1.299-4.482-.02-.385.094-.522.477-.592a4.7 4.7 0 0 1 1.53-.038c2.131.311 3.946 1.264 5.467 2.774.868.86 1.525 1.887 2.202 2.89.72 1.066 1.494 2.082 2.48 2.915.348.291.626.513.892.677-.802.09-2.14.109-3.055-.615zm1.001-6.44a.306.306 0 0 1 .415-.287.3.3 0 0 1 .113.074.3.3 0 0 1 .086.214c0 .17-.136.307-.308.307a.303.303 0 0 1-.306-.307m3.11 1.596c-.2.081-.4.151-.591.16a1.25 1.25 0 0 1-.798-.254c-.274-.23-.47-.358-.551-.758a1.7 1.7 0 0 1 .015-.588c.07-.327-.007-.537-.238-.727-.188-.156-.426-.199-.689-.199a.6.6 0 0 1-.254-.078.253.253 0 0 1-.114-.358 1 1 0 0 1 .192-.21c.356-.202.767-.136 1.146.016.352.144.618.408 1.001.782.392.451.462.576.685.915.176.264.336.536.446.848.066.194-.02.353-.25.45' }))
+}
+function minimaxIcon(size) {
+  return h('svg', { viewBox: '0 0 24 24', width: size, height: size, fill: 'currentColor', 'aria-hidden': 'true' },
+    h('path', { d: 'M11.43 3.92a.86.86 0 1 0-1.718 0v14.236a1.999 1.999 0 0 1-3.997 0V9.022a.86.86 0 1 0-1.718 0v3.87a1.999 1.999 0 0 1-3.997 0V11.49a.57.57 0 0 1 1.139 0v1.404a.86.86 0 0 0 1.719 0V9.022a1.999 1.999 0 0 1 3.997 0v9.134a.86.86 0 0 0 1.719 0V3.92a1.998 1.998 0 1 1 3.996 0v11.788a.57.57 0 1 1-1.139 0zm10.572 3.105a2 2 0 0 0-1.999 1.997v7.63a.86.86 0 0 1-1.718 0V3.923a1.999 1.999 0 0 0-3.997 0v16.16a.86.86 0 0 1-1.719 0V18.08a.57.57 0 1 0-1.138 0v2a1.998 1.998 0 0 0 3.996 0V3.92a.86.86 0 0 1 1.719 0v12.73a1.999 1.999 0 0 0 3.996 0V9.023a.86.86 0 1 1 1.72 0v6.686a.57.57 0 0 0 1.138 0V9.022a2 2 0 0 0-1.998-1.997' }))
+}
+function arkIcon(size) {
+  return h('svg', { viewBox: '0 0 24 24', width: size, height: size, fill: 'currentColor', fillRule: 'evenodd', 'aria-hidden': 'true' },
+    h('path', { d: 'M7.29 5.36L3.148 21.737a.215.215 0 00.203.261h8.29a.214.214 0 00.215-.261L7.7 5.359a.214.214 0 00-.41 0z', fillOpacity: 0.5 }),
+    h('path', { d: 'M4.553 16.18l-1.406 5.558a.214.214 0 00.203.261h2.42-4.551a.214.214 0 01-.214-.26l2.275-8.961a.214.214 0 01.409 0l.864 3.402z', clipRule: 'evenodd' }),
+    h('path', { d: 'M14.44.15a.214.214 0 00-.41 0L8.366 21.739a.214.214 0 00.214.261H19.9a.214.214 0 00.215-.261L14.44.151z', fillOpacity: 0.5 }),
+    h('path', { d: 'M16.694 22h3.207a.215.215 0 00.214-.262l-1.839-6.993 1.164-4.592a.214.214 0 01.411 0l2.951 11.586a.214.214 0 01-.214.261h-5.894z', clipRule: 'evenodd' }),
+    h('path', { d: 'M10.278 7.741L6.685 21.736a.214.214 0 00.214.264h7.17a.216.216 0 00.214-.166.216.216 0 000-.098L10.687 7.742a.214.214 0 00-.409 0z' }))
+}
+function stepfunIcon(size) {
+  return h('svg', { viewBox: '0 0 64 64', width: size, height: size, 'aria-hidden': 'true' },
+    h('rect', { width: 64, height: 64, rx: 12, fill: '#1d1d1d' }),
+    h('path', { d: 'M33.76 43.03v-8.84h18.05v1.58H41.56v16.1h-7.8zm-21.57-4.39h9.3l-.02-10.4-.01-10.38h25.15l.02 7.62H29.37v20.8H12.2Zm4.28-23.24h1.58v17.67h-1.58zm32.28-.07h-3.23v-1.57h3.23v-1.57h1.54v1.57h1.58l-.01.79v.79h-1.57v3.19h-1.54v-3.2', fill: '#fff' }))
+}
+function brandMark(p, size) {
+  const kind = p.kind
+  const id = String(p.id || '').toLowerCase()
+  const mark = kind === 'deepseek' || id.indexOf('deepseek') === 0 ? { color: '#4d6bfe', el: deepseekIcon(size) }
+    : kind === 'minimax' ? { color: '#ff4d4d', el: minimaxIcon(size) }
+    : kind === 'ark' ? { color: '#4D7DFF', el: arkIcon(size) }
+    : kind === 'stepfun' ? { color: '#16D6D2', el: stepfunIcon(size) }
+    : null
+  if (mark) return h('span', { className: 'mkw-chip-icon', style: { color: mark.color, width: size + 'px', height: size + 'px' } }, mark.el)
+  return h('span', { className: 'mkw-chip-badge', style: { background: badgeColor(p) } }, String(p.displayName || p.id || '?').trim().charAt(0).toUpperCase())
+}
+function aggChip(p) {
+  let num = null
+  if (p.status === 'ok' && p.balance) {
+    num = { text: fmtMoney(p.balance.total, p.balance.currency), color: p.balance.available ? '#34d399' : '#fbbf24' }
+  } else if (p.status === 'ok') {
+    const w = aggRepWindow(p)
+    if (w) num = { text: w.percent.toFixed(2) + '%', color: levelColor(w) }
+  }
+  return h('span', { className: 'mkw-chip', key: p.chipKey, title: rowTip(p) },
+    brandMark(p, 14),
+    num
+      ? h('span', { className: 'mkw-chip-num', style: { color: num.color } }, num.text)
+      : h('span', { className: 'mkw-chip-num', style: { color: statusColor(p) || 'var(--dsw-alias-label-tertiary,#64748b)' } }, statusShort(p))
+  )
+}
+
+function aggWide(providers) {
+  // 每排 3 个 chip，全量渲染；超过一行自动折成多排（调用方每排渲染一个按钮行），无 +N 截断
+  const chips = providers.map(function (p, i) {
+    return aggChip(Object.assign({}, p, { chipKey: p.id + '#' + i }))
+  })
+  const rows = []
+  for (let i = 0; i < chips.length; i += 3) {
+    const row = []
+    chips.slice(i, i + 3).forEach(function (chip, j) {
+      if (j > 0) row.push(h('span', { className: 'mkw-sep', key: 'sep-' + i + '-' + j }, '·'))
+      row.push(chip)
+    })
+    rows.push(row)
+  }
+  return rows
+}
+
+function aggRail(providers) {
+  const issue = providers.some(function (p) { return p.status !== 'ok' })
+  return h('span', { className: 'mkw-agg' },
+    usageIcon(18),
+    h('span', { className: 'mkw-agg-count' + (issue ? ' mkw-agg-count-issue' : '') }, String(providers.length))
+  )
+}
+
+function usageIcon(size) {
+  return h('svg', {
+    viewBox: '0 0 24 24', width: size, height: size, fill: 'none',
+    stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': 'true',
+  },
+    h('path', { d: 'M5 20v-9' }),
+    h('path', { d: 'M12 20V4' }),
+    h('path', { d: 'M19 20v-5' })
+  )
+}
+
+function aggTip(providers) {
+  return providers.map(function (p) { return rowTip(p) }).join('\n')
+}
+
+function ModelUsageWidget(props) {
+  const { result, load, refresh, busy } = useModelUsage()
+  const wide = !!(props && props.wide)
+  const [open, setOpen] = React.useState(false)
+  const [anchor, setAnchor] = React.useState(null)
+  const [activeId, setActiveId] = React.useState(null)
+  const [authBusy, setAuthBusy] = React.useState(false)
+  const [popPos, setPopPos] = React.useState({ left: 8, top: 8 })
+  const popRef = React.useRef(null)
+  const stackRef = React.useRef(null)
+
+  function toggleRow(e) {
+    const node = e.currentTarget
+    if (open && anchor === node) {
+      setOpen(false)
+      return
+    }
+    setAnchor(node)
+    const r = node.getBoundingClientRect()
+    setPopPos({ left: Math.round(r.right + 10), top: Math.max(8, Math.round(r.bottom - 300)) })
+    setOpen(true)
+  }
+
+  function openAuth(e, url) {
+    e.stopPropagation()
+    if (typeof url === 'string' && url) {
+      try { window.open(url, '_blank', 'noopener') } catch (err) {}
+    }
+  }
+
+  // Ark SSO cannot be completed by a static jump: the browser-side button asks
+  // the host half to spawn `arkcli auth login volc-sso` (same-device flow with
+  // loopback callback), then refreshes so the row reflects the new state.
+  async function authAction(p, e) {
+    if (p.kind !== 'ark') {
+      openAuth(e, p.authUrl)
+      return
+    }
+    e.stopPropagation()
+    if (authBusy) return
+    setAuthBusy(true)
+    try {
+      const r = await callArkLogin()
+      if (!r || r.ok !== true) window.alert((r && r.message) || '登录未完成')
+    } catch (err) {
+      window.alert('登录请求失败：' + String((err && err.message) || err))
+    }
+    setAuthBusy(false)
+    load(true)
+  }
+
+  useLayout(function () {
+    return bindLayout(stackRef.current, wide)
+  }, [wide])
+
+  useLayout(function () {
+    if (!open) return
+    const pop = popRef.current
+    const btn = anchor
+    if (!pop || !btn) return
+    function place() {
+      const next = placePop(btn, pop)
+      setPopPos(function (prev) {
+        if (prev && Math.abs(prev.left - next.left) < 1 && Math.abs(prev.top - next.top) < 1) return prev
+        return next
+      })
+    }
+    place()
+    // One frame later the tab-switched card / fonts have settled; re-measure so
+    // the popup is always seated bottom-flush with its FINAL height.
+    const raf = window.requestAnimationFrame(place)
+    window.addEventListener('resize', place)
+    return function () { window.cancelAnimationFrame(raf); window.removeEventListener('resize', place) }
+  }, [open, result, anchor, activeId])
+
+  useLayout(function () {
+    if (!open) return
+    function onDown(e) {
+      const wrap = stackRef.current
+      if (wrap && e.target && wrap.contains(e.target)) return
+      setOpen(false)
+    }
+    window.addEventListener('pointerdown', onDown)
+    return function () { window.removeEventListener('pointerdown', onDown) }
+  }, [open])
+
+  const providers = result && Array.isArray(result.providers) ? result.providers : []
+
+  // 方案 A：恒定一行 —— 行数与模型数量无关（宽栏 = 徽章+代表数字 chips，rail = 图标+数量角标），
+  // 详情统一进弹窗（Tab 切换单个提供方卡片）。
+  const rows = []
+  if (!result) {
+    rows.push(h('div', { className: 'mkw-sb', key: 'loading' },
+      h('span', { className: 'mkw-dim' }, '加载中…')
+    ))
+  } else if (!result.ok) {
+    rows.push(h('button', { className: 'mkw-sb', key: 'error', onClick: function () { load(true) }, title: result.detail || result.error || '获取失败' },
+      h('span', { className: 'mkw-err' }, '获取失败')
+    ))
+  } else if (!providers.length) {
+    rows.push(h('div', { className: 'mkw-sb', key: 'empty' },
+      h('span', { className: 'mkw-dim' }, '无提供方')
+    ))
+  } else {
+    if (wide) {
+      aggWide(providers).forEach(function (rowChips, r) {
+        rows.push(h('button', { className: 'mkw-sb', key: 'agg-' + r, onClick: toggleRow, title: aggTip(providers) }, rowChips))
+      })
+    } else {
+      rows.push(h('button', { className: 'mkw-sb', key: 'agg', onClick: toggleRow, title: aggTip(providers) },
+        aggRail(providers)
+      ))
+    }
+  }
+
+  let pop = null
+  if (open) {
+    const updated = new Date((result && result.updatedAt) || Date.now())
+    const updatedText = pad(updated.getHours()) + ':' + pad(updated.getMinutes()) + ':' + pad(updated.getSeconds())
+    const activeProvider = providers.find(function (p) { return p.id === activeId }) || providers[0] || null
+    let body
+    if (!result) {
+      body = h('div', null,
+        h('div', { className: 'mkw-skel', style: { width: '40%', marginBottom: '6px' } }),
+        h('div', { className: 'mkw-skel', style: { width: '92%', marginBottom: '6px' } }),
+        h('div', { className: 'mkw-skel', style: { width: '80%' } })
+      )
+    } else {
+      body = activeProvider
+        ? ProviderCard(activeProvider, authAction, authBusy)
+        : h('div', { className: 'mkw-msg' }, '模型配置中没有提供方')
+    }
+    pop = h('div', {
+      className: 'mkw-sb-pop',
+      ref: function (node) { popRef.current = node },
+      style: { left: popPos.left + 'px', top: popPos.top + 'px' },
+    },
+      h('div', { className: 'mkw-sb-head' },
+        h('span', { className: 'mkw-sb-title' }, '模型用量'),
+        h('div', { className: 'mkw-sb-head-right' },
+          h('button', {
+            className: 'mkw-sb-refresh',
+            disabled: busy,
+            onClick: refresh,
+            title: '刷新',
+          }, h('svg', {
+            viewBox: '0 0 24 24',
+            width: 16,
+            height: 16,
+            fill: 'none',
+            stroke: 'currentColor',
+            strokeWidth: 2,
+            strokeLinecap: 'round',
+            strokeLinejoin: 'round',
+            className: busy ? 'mkw-spin' : undefined,
+          },
+            h('path', { d: 'M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8' }),
+            h('path', { d: 'M21 3v5h-5' })
+          ))
+        )
+      ),
+      providers.length > 1 ? h('div', { className: 'mkw-tabbar' },
+        providers.map(function (p, i) {
+          return h('button', { className: 'mkw-tab' + (activeProvider && p.id === activeProvider.id ? ' mkw-tab-on' : ''), key: p.id + '#' + i, onClick: function () { setActiveId(p.id) }, title: rowTip(p) },
+            brandMark(p, 13),
+            h('span', null, p.displayName || p.id)
+          )
+        })
+      ) : null,
+      h('div', { className: 'mkw-sb-body' }, body),
+      result ? h('div', { className: 'mkw-sb-foot' }, '更新于 ' + updatedText) : null
+    )
+  }
+
+  return h('div', {
+    className: 'mkw-stack' + (wide ? '' : ' mkw-rail'),
+    ref: function (node) { stackRef.current = node },
+  },
+    rows,
+    pop
+  )
+}
+
+// ── plugin entry ────────────────────────────────────────────────────────────
+
+function apply(ctx) {
+  ctx.effect(function () {
+    if (typeof document === 'undefined') return undefined
+    const tag = document.createElement('style')
+    tag.dataset.plugin = 'dsh-model-usage-widget'
+    tag.dataset.pluginCss = 'dsh-model-usage-widget/styles'
+    tag.textContent = WIDGET_CSS
+    document.head.appendChild(tag)
+    return function () {
+      if (tag.parentNode) tag.parentNode.removeChild(tag)
+    }
+  }, 'dsh-model-usage-widget: styles')
+
+  ctx.slots.inject('sidebar.footer.action', function () {
+    return ctx.slots.register(
+      { name: 'sidebar.footer.action', id: 'model-usage', order: 100 },
+      ModelUsageWidget
+    )
+  })
+}
+
+module.exports = { inject: ['slots'], apply }
