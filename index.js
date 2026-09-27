@@ -145,10 +145,57 @@ export function apply(ctx) {
 // ── provider config + per-provider usage fetchers ───────────────────────────
 
 function createFetcher(ctx) {
+  /** 递归物化 cordis Config：嵌套值可能是带 .get() 的包装器，JSON.stringify 会静默丢内容。 */
+  function materializeConfig(v, depth) {
+    if (depth > 6 || v === null || typeof v !== 'object') return v
+    let cur = v
+    try { if (typeof cur.get === 'function') cur = cur.get() } catch (e) {}
+    if (cur === null || typeof cur !== 'object') return cur
+    if (Array.isArray(cur)) return cur.map(function (x) { return materializeConfig(x, depth + 1) })
+    const out = {}
+    for (const k of Object.keys(cur)) {
+      if (k === 'get' && typeof cur[k] === 'function') continue
+      out[k] = materializeConfig(cur[k], depth + 1)
+    }
+    return out
+  }
+
   function settingsGet(ns) {
+    // DSH 0.1.5: SettingsForms.get(ns) 直读命名空间。0.1.7 起该方法被移除
+    // （只剩 describe/update/replace/mutate），命名空间 = profile entry id，
+    // 活配置要走 configEditor：configuration()[].entry.fiber.config，
+    // 或 settings.describe() 里 ns 匹配的 descriptor.value（需条目有表单 schema）。
     try {
       const settings = Reflect.get(ctx, 'settings')
       if (settings && typeof settings.get === 'function') return settings.get(ns)
+    } catch (e) {}
+    try {
+      const editor = typeof ctx.get === 'function' ? ctx.get('configEditor') : Reflect.get(ctx, 'configEditor')
+      if (editor && typeof editor.configuration === 'function') {
+        const row = editor.configuration().find(function (r) {
+          return r && r.entry && r.entry.options && r.entry.options.id === ns
+        })
+        if (row) {
+          // a) 用户补丁层 override：纯对象（structuredClone 自补丁文件），
+          //    设置面板写入（settings.update → configEditor.edit）也落在这层。优先。
+          const ov = row.override
+          if (ov && typeof ov === 'object' && Object.keys(ov).length > 0) {
+            try { return JSON.parse(JSON.stringify(ov)) } catch (e) {}
+          }
+          // b) 活配置 fiber.config：cordis 响应式包装，嵌套值是带 .get() 的
+          //    Config 包装器（JSON.stringify 会静默丢成 {}），递归物化。
+          const cfg = row.entry && row.entry.fiber ? row.entry.fiber.config : undefined
+          const plain = materializeConfig(cfg, 0)
+          if (plain && typeof plain === 'object' && Object.keys(plain).length > 0) return plain
+        }
+      }
+    } catch (e) {}
+    try {
+      const settings = Reflect.get(ctx, 'settings')
+      if (settings && typeof settings.describe === 'function') {
+        const hit = settings.describe().find(function (d) { return d && d.ns === ns })
+        if (hit && hit.value && typeof hit.value === 'object') return hit.value
+      }
     } catch (e) {}
     return undefined
   }

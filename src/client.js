@@ -34,6 +34,10 @@ const useLayout = typeof React.useLayoutEffect === 'function' ? React.useLayoutE
 const WIDGET_CSS =
   '.mkw-stack{display:flex;flex-direction:column;min-width:0;order:100}' +
   'div:has(>[data-slot="sidebar.footer.action"]):has(.mkw-stack){display:contents}' +
+  // 宽栏恒定占满侧栏宽度：槽位锚与 footerActions 常被 :has() 压成 display:contents，
+  // 栈的实际 flex 容器是列向的 footArea——bindLayout 的行检测会落空，所以宽栏
+  // 拉伸必须由这条 CSS 兜底（align-self 对列容器生效，width 兜住非 flex 容器）。
+  '.mkw-wide{width:100%;align-self:stretch}' +
   '.mkw-rail{width:36px}' +
   '.mkw-sb{display:flex;align-items:center;gap:6px;height:30px;width:100%;padding:0 8px;border:0;border-radius:8px;background:transparent;color:var(--dsw-alias-label-secondary,#94a3b8);cursor:pointer;font-family:inherit;white-space:nowrap;overflow:hidden;transition:background .15s ease,color .15s ease}' +
   '.mkw-sb:hover{color:var(--dsw-alias-label-primary,#e2e8f0);background:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.08))}' +
@@ -255,11 +259,14 @@ function placePop(btn, pop) {
 // full width. Every mutation is restored on cleanup.
 function bindLayout(node, wide) {
   let el = node && node.parentElement
-  for (let i = 0; i < 4 && el; i++) {
+  for (let i = 0; i < 6 && el; i++) {
     let cs = null
     try {
       if (typeof window !== 'undefined' && window.getComputedStyle) cs = window.getComputedStyle(el)
     } catch (err) {}
+    // display:contents 的盒子自身不参与布局（槽位锚、被 :has() 压平的 footerActions），
+    // 不能当 flex 容器判定对象，跳过继续向上找。
+    if (cs && cs.display === 'contents') { el = el.parentElement; continue }
     if (cs && String(cs.display).indexOf('flex') >= 0) {
       const isRow = String(cs.flexDirection || '').indexOf('row') === 0
       const prevWrap = el.style.flexWrap
@@ -662,7 +669,7 @@ function ModelUsageWidget(props) {
   }
 
   return h('div', {
-    className: 'mkw-stack' + (wide ? '' : ' mkw-rail'),
+    className: 'mkw-stack' + (wide ? ' mkw-wide' : ' mkw-rail'),
     ref: function (node) { stackRef.current = node },
   },
     rows,
